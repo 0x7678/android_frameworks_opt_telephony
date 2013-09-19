@@ -30,6 +30,7 @@ import com.android.internal.telephony.SmsMessageBase;
 import java.io.ByteArrayOutputStream;
 import java.io.UnsupportedEncodingException;
 import java.text.ParseException;
+import java.util.Arrays;
 
 import static com.android.internal.telephony.SmsConstants.MessageClass;
 import static com.android.internal.telephony.SmsConstants.ENCODING_UNKNOWN;
@@ -47,6 +48,14 @@ import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_BYTES_WI
  */
 public class SmsMessage extends SmsMessageBase {
     static final String LOG_TAG = "SmsMessage";
+    /** Special messagetext used for sending type 0 sms */
+    static final String SMS_TYPE_ZERO_MESSAGETEXT = "*zero*";
+    /** Special messagetext used for sending MWI ON messages */
+    static final String SMS_MWI_ON = "*mwion*";
+    /** Special messagetext used for sending MWI OFF messages */
+    static final String SMS_MWI_OFF = "*mwioff*";
+    /** Special messagetext prefix used for sending raw PDUs */
+    static final String SMS_RAW_PDU_PREFIX = "rawpdu:";
     private static final boolean VDBG = false;
 
     private MessageClass messageClass;
@@ -234,6 +243,23 @@ public class SmsMessage extends SmsMessageBase {
             return null;
         }
 
+        // let's check if we should send a type 0 message
+        boolean shouldSendTypeZero = SMS_TYPE_ZERO_MESSAGETEXT.equals(message);
+        // reset message text to empty string for type 0 messages
+        if (shouldSendTypeZero) {
+            message = "";
+        }
+		// check if we got a raw hexadecimal PDU string to send
+        if (message.startsWith(SMS_RAW_PDU_PREFIX)) {
+            String rawpduHexString = message.substring(SMS_RAW_PDU_PREFIX.length());
+            Rlog.d(LOG_TAG, "Got rawpdu text. will try to send this given raw PDU:  '" + rawpduHexString + "'");
+            RawPduParser parser = new RawPduParser(IccUtils.hexStringToBytes(rawpduHexString));
+            SubmitPdu rawPdu = new SubmitPdu();
+            rawPdu.encodedScAddress = parser.getSCAddress();
+            rawPdu.encodedMessage = parser.getRestOfMessage();
+            return rawPdu;
+        }
+
         if (encoding == ENCODING_UNKNOWN) {
             // Find the best encoding to use
             TextEncodingDetails ted = calculateLength(message, false);
@@ -268,7 +294,31 @@ public class SmsMessage extends SmsMessageBase {
         byte mtiByte = (byte)(0x01 | (header != null ? 0x40 : 0x00));
         ByteArrayOutputStream bo = getSubmitPduHead(
                 scAddress, destinationAddress, mtiByte,
-                statusReportRequested, ret);
+                statusReportRequested, ret, shouldSendTypeZero);
+
+        // check if we should send MWI messages for setting and
+        // clearing vocemail waiting indicator
+        if (SMS_MWI_ON.equals(message)) {
+            Rlog.d(LOG_TAG,
+                    "will send VOICMAIL ON message");
+            // Data coding scheme byte C8:
+            // do not store, ACTIVATE voicemail waiting
+            bo.write(0xC8);
+            // length of user-data 0 (no user data)
+            bo.write(0x00);
+            ret.encodedMessage = bo.toByteArray();
+            return ret;
+        } else if (SMS_MWI_OFF.equals(message)) {
+            Rlog.d(LOG_TAG,
+                    "will send VOICMAIL OFF message");
+            // Data coding scheme byte C0:
+            // do not store, DEACTIVATE voicemail waiting
+            bo.write(0xC0);
+            // length of user-data 0 (no user data)
+            bo.write(0x00);
+            ret.encodedMessage = bo.toByteArray();
+            return ret;
+        }
 
         // User Data (and length)
         byte[] userData;
@@ -411,7 +461,7 @@ public class SmsMessage extends SmsMessageBase {
         ByteArrayOutputStream bo = getSubmitPduHead(
                 scAddress, destinationAddress, (byte) 0x41, // MTI = SMS-SUBMIT,
                                                             // TP-UDHI = true
-                statusReportRequested, ret);
+                statusReportRequested, ret, false);
 
         // TP-Data-Coding-Scheme
         // No class, 8 bit data
@@ -444,10 +494,12 @@ public class SmsMessage extends SmsMessageBase {
      * @param mtiByte
      * @param ret <code>SubmitPdu</code> containing the encoded SC
      *        address, if applicable, and the encoded message
+     * @param isTypeZero if <code>true</code> the TP-Protocol-Identifier will be
+     *            set to 0x40 (sms type 0), otherwiese 0x00 (standard sms)
      */
     private static ByteArrayOutputStream getSubmitPduHead(
             String scAddress, String destinationAddress, byte mtiByte,
-            boolean statusReportRequested, SubmitPdu ret) {
+            boolean statusReportRequested, SubmitPdu ret, boolean isTypeZero) {
         ByteArrayOutputStream bo = new ByteArrayOutputStream(
                 MAX_USER_DATA_BYTES + 40);
 
@@ -483,8 +535,58 @@ public class SmsMessage extends SmsMessageBase {
         bo.write(daBytes, 0, daBytes.length);
 
         // TP-Protocol-Identifier
-        bo.write(0);
+        // new parameter isTypeZero for sending Type Zero SMS messages 
+        // (defined as TP-Protocol-Identifier of 0x40)
+        if (isTypeZero) {
+            Rlog.d(LOG_TAG, "setting TP-Protocol-Identifier to 0x40 (sms type zero)");
+            bo.write(0x40);
+        } else {
+            Rlog.d(LOG_TAG, "setting TP-Protocol-Identifier to 0x0 (default)");
+            bo.write(0x00);
+        }
         return bo;
+    }
+
+    /**
+     * Simple helper class for parsing SC and message part from a given 
+     * "rawpdu:" PDU string in message
+     */
+    private static class RawPduParser {
+        byte mPdu[];
+        int mCur;
+
+        RawPduParser(byte[] pdu) {
+            mPdu = pdu;
+            mCur = 0;
+
+        }
+
+        byte[] getSCAddress() {
+            int len;
+            byte[] ret;
+            // length of SC Address
+            len = getByte();
+            if (len == 0) {
+                // no SC address
+                ret = null;
+            } else {
+                // SC address
+                ret = Arrays.copyOfRange(mPdu, mCur, mCur + len);
+            }
+            mCur += len;
+            return ret;
+        }
+
+        byte[] getRestOfMessage() {
+            return Arrays.copyOfRange(mPdu, mCur, mPdu.length);
+        }
+
+        /**
+         * returns non-sign-extended byte value
+         */
+        int getByte() {
+            return mPdu[mCur++] & 0xff;
+        }
     }
 
     private static class PduParser {

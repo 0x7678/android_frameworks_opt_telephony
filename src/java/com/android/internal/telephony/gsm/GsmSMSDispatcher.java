@@ -171,8 +171,13 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
         if (sms.isTypeZero()) {
             // As per 3GPP TS 23.040 9.2.3.9, Type Zero messages should not be
             // Displayed/Stored/Notified. They should only be acknowledged.
-            Rlog.d(TAG, "Received short message type 0, Don't display or store it. Send Ack");
-            return Intents.RESULT_SMS_HANDLED;
+            //Rlog.d(TAG, "Received short message type 0, Don't display or store it. Send Ack");
+            //return Intents.RESULT_SMS_HANDLED;
+
+            // We ignore 3GPP TS 23.040 9.2.3.9 and handle Type Zero SMS nevertheless
+            // (altough they might have 0-length message body)
+            Rlog.d(TAG,
+                    "Received short message type 0. Will NOT discard it (like proposed in the standard)");
         }
 
         // Send SMS-PP data download messages to UICC. See 3GPP TS 31.111 section 7.1.1.
@@ -256,6 +261,13 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
         SmsMessage.SubmitPdu pdu = SmsMessage.getSubmitPdu(
                 scAddr, destAddr, text, (deliveryIntent != null));
         if (pdu != null) {
+            // debug logging
+            Rlog.d(TAG,
+                    "calling sendRawPdu(): encodedSCaddress='"
+                            + IccUtils.bytesToHexString(pdu.encodedScAddress)
+                            + "', encodedMessage='"
+                            + IccUtils.bytesToHexString(pdu.encodedMessage)
+                            + "'");
             sendRawPdu(pdu.encodedScAddress, pdu.encodedMessage, sentIntent, deliveryIntent,
                     destAddr);
         } else {
@@ -310,6 +322,10 @@ public final class GsmSMSDispatcher extends SMSDispatcher {
                 pdu[1] = (byte) tracker.mMessageRef; // TP-MR
             }
         }
+        Rlog.d(TAG,
+                "will send NOW raw PDU in sendSMS(): SMSC='"
+                        + IccUtils.bytesToHexString(smsc) + "', PDU='"
+                        + IccUtils.bytesToHexString(pdu) + "'");
         mCi.sendSMS(IccUtils.bytesToHexString(smsc), IccUtils.bytesToHexString(pdu), reply);
     }
 
