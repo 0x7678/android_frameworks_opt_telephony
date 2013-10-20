@@ -1,3 +1,22 @@
+Part of the cyanogenmod project.
+
+Modified by Johannes Zweng to be able to send and receive *silent*
+SMS (Type-0-SMS as defined per 3GPP TS 23.040 9.2.3.9), as well as 
+*special* SMS-types for setting and clearing the voicemail message
+indicator (just by using special keywords as messagetext: *zero*,
+*mwion* and *mwioff*)
+
+
+
+
+
+
+=======================================================================
+=======================================================================
+=======================================================================
+
+
+
 This package contains classes used to manage a DataConnection.
 
 A criticial aspect of this class is that most objects in this
