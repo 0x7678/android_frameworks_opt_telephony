@@ -1,9 +1,10 @@
-Part of the cyanogenmod project.
+Initally part of the cyanogenmod project.
 
-Modified by Johannes Zweng to be able to send and receive *silent*
-SMS (Type-0-SMS as defined per 3GPP TS 23.040 9.2.3.9), as well as 
-*special* SMS-types for setting and clearing the voicemail message
-indicator (just by using special keywords as messagetext: *zero*,
+Forked and modified by Johannes Zweng to be able to send and receive
+*silent* SMS (Type-0-SMS or aka hidden SMS as defined per 3GPP TS
+23.040 9.2.3.9), as well as *special* SMS-types for setting and 
+clearing the voicemail message indicator (just by using special
+keywords as messagetext: *zero*,
 *mwion* and *mwioff*)
 
 
